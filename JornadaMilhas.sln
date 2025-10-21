@@ -7,6 +7,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "JornadaMilhas", "src\Jornad
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JornadaMilhas.Teste", "Testes\JornadaMilhas.Teste\JornadaMilhas.Teste.csproj", "{D7939E26-43D2-44BD-80A4-BA3686D99711}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Musica.Teste", "Exercicios\Musica.Teste.csproj", "{3984E266-BA7A-49CA-B364-B15A6624B302}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Musica", "Musica\Musica.csproj", "{D274A212-C430-499F-AA90-E389B1CC5AF4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +25,14 @@ Global
 		{D7939E26-43D2-44BD-80A4-BA3686D99711}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D7939E26-43D2-44BD-80A4-BA3686D99711}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D7939E26-43D2-44BD-80A4-BA3686D99711}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3984E266-BA7A-49CA-B364-B15A6624B302}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3984E266-BA7A-49CA-B364-B15A6624B302}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3984E266-BA7A-49CA-B364-B15A6624B302}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3984E266-BA7A-49CA-B364-B15A6624B302}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D274A212-C430-499F-AA90-E389B1CC5AF4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D274A212-C430-499F-AA90-E389B1CC5AF4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D274A212-C430-499F-AA90-E389B1CC5AF4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D274A212-C430-499F-AA90-E389B1CC5AF4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
