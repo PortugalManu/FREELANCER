@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Diárias</title>
+  <meta name="description" content="Diárias, cartões e carro: quanto falta receber.">
+  <meta name="theme-color" content="#7c5cff">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Primeiro acesso -->
+  <section id="setup" class="setup" hidden>
+    <div class="setup-card">
+      <img src="icons/icon-192.png" alt="" class="setup-logo" width="72" height="72">
+      <h1>Diárias</h1>
+      <p class="muted">Abra no celular o link gerado na planilha (menu <b>Freelancers → App do celular → Criar chave de acesso</b>). O app já entra configurado.</p>
+      <details>
+        <summary>Prefiro digitar</summary>
+        <form id="formSetup" class="form">
+          <label>Endereço da API
+            <input name="api" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" required>
+          </label>
+          <label>Chave de acesso
+            <input name="chave" autocomplete="off" required minlength="20">
+          </label>
+          <button class="btn primario" type="submit">Entrar</button>
+        </form>
+      </details>
+      <p id="setupMsg" class="msg-erro" hidden></p>
+    </div>
+  </section>
+
+  <!-- App -->
+  <div id="app" class="app" hidden>
+    <header class="topo">
+      <div class="topo-txt">
+        <p class="saudacao" id="saudacao"></p>
+        <p class="atualizado" id="atualizado"></p>
+      </div>
+      <button class="btn-icone" id="btnAtualizar" aria-label="Atualizar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16m0 4v-4h-4"/></svg>
+      </button>
+    </header>
+
+    <main id="tela" class="tela" tabindex="-1"></main>
+
+    <nav class="abas" id="abas">
+      <button data-tela="resumo" class="ativa">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4zM14 20h6v-9h-6zM14 4v4h6V4zM4 20h6v-4H4z"/></svg>
+        <span>Resumo</span>
+      </button>
+      <button data-tela="lancar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM12 12v5M9.5 14.5h5"/></svg>
+        <span>Lançar</span>
+      </button>
+      <button data-tela="abater" id="abaAbater">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v10H3zM3 10h18M7 14h3"/><path d="M15.5 14.2l1.3 1.3 2.4-2.6"/></svg>
+        <span>Abater</span>
+      </button>
+      <button data-tela="ajustes">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1 0 1.6-.8 1.6-1.6 0-.5-.2-.8-.4-1.1-.3-.3-.4-.6-.4-1.1 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4.2-4-7.6-9-7.6z"/><circle cx="7.5" cy="11" r="1.2"/><circle cx="10" cy="7.2" r="1.2"/><circle cx="14.5" cy="7.2" r="1.2"/></svg>
+        <span>Do meu jeito</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="dlg" class="dlg"></dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
