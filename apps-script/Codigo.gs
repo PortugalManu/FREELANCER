@@ -870,7 +870,15 @@ function lerDias_(base, tz, pessoa) {
       mesTxt = MESES[Number(Utilities.formatDate(d, tz, 'M')) - 1] + '/' + Utilities.formatDate(d, tz, 'yyyy');
     }
 
-    itens.push({ dataTxt, valor, restante, obs: obsLimpa, mes, mesTxt });
+    itens.push({
+      dataTxt, valor, restante, obs: obsLimpa, mes, mesTxt,
+      // para o app editar/apagar: onde está e como estava (o script confere antes de mexer)
+      linha: FIRST_ROW + i,
+      dataISO: d instanceof Date ? Utilities.formatDate(d, tz, 'yyyy-MM-dd') : '',
+      obsBruta: obs,
+      // só dá para editar/apagar o que não recebeu nenhum pagamento
+      editavel: d instanceof Date && valor > 0.004 && !isPaidFont_(jf[i][0]) && parseFalta_(obs, pessoa) === null
+    });
   }
   return itens;
 }

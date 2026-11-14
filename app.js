@@ -58,7 +58,9 @@ const ICO = {
   manu: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.5-6 8-6s7 2 8 6"/></svg>',
   chev: '<svg viewBox="0 0 24 24" class="bloco-chev"><path d="M6 9l6 6 6-6"/></svg>',
   enviar: '<svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3-7z"/></svg>',
-  check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
+  check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  lapis: '<svg viewBox="0 0 24 24" class="item-acao"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg>',
+  cadeado: '<svg viewBox="0 0 24 24" class="item-acao"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>'
 };
 const icoBloco = g => ICO[g === 'jose' ? 'diaria' : g] || ICO.diaria;
 
@@ -204,6 +206,7 @@ $('#abas').addEventListener('click', e => {
 });
 function irPara(tela) {
   if (st.tela === 'ajustes' && tela !== 'ajustes' && st.rascunhoCfg) { st.rascunhoCfg = null; aplicarTema(st.cfg); }
+  if (st.tela === 'lancar' && tela !== 'lancar' && st.lancar && st.lancar.modo === 'editar') st.lancar = null;
   st.tela = tela;
   document.querySelectorAll('#abas button').forEach(b => b.classList.toggle('ativa', b.dataset.tela === tela));
   render();
@@ -255,9 +258,12 @@ function blocoHTML(b) {
         <span class="bloco-valor num">${emDia ? 'em dia' : brl(b.falta)}</span>
         ${emDia ? '' : ICO.chev}
       </button>
-      ${aberto ? `<ul class="itens">${b.itens.map(it => `
-        <li class="item"><span class="item-txt"><span class="item-titulo">${esc(it.titulo)}</span>${it.sub ? `<span class="item-sub">${esc(it.sub)}</span>` : ''}</span>
-        <span class="item-valor num">${brl(it.valor)}</span></li>`).join('')}</ul>` : ''}
+      ${aberto ? `<ul class="itens">${b.itens.map((it, i) => {
+        const mexe = it.diaria && podeMexer(b);
+        const corpo = `<span class="item-txt"><span class="item-titulo">${esc(it.titulo)}</span>${it.sub ? `<span class="item-sub">${esc(it.sub)}</span>` : ''}</span>
+          <span class="item-valor num">${brl(it.valor)}</span>${mexe ? (it.diaria.editavel ? ICO.lapis : ICO.cadeado) : ''}`;
+        return mexe ? `<li><button class="item item-btn" data-bloco="${esc(b.id)}" data-i="${i}">${corpo}</button></li>` : `<li class="item">${corpo}</li>`;
+      }).join('')}</ul>${b.itens.some(it => it.diaria) && podeMexer(b) ? '<p class="dica itens-dica">Toque numa diária para editar ou apagar.</p>' : ''}` : ''}
     </div>`;
 }
 function ligarResumo(tela) {
@@ -266,8 +272,52 @@ function ligarResumo(tela) {
     st.abertos.has(id) ? st.abertos.delete(id) : st.abertos.add(id);
     render();
   }));
+  tela.querySelectorAll('.item-btn').forEach(btn => btn.addEventListener('click', () => {
+    const b = st.resumo.blocos.find(x => x.id === btn.dataset.bloco);
+    abrirDiaria(b, b.itens[Number(btn.dataset.i)]);
+  }));
   const env = $('#btnEnviarPai');
   if (env) env.addEventListener('click', enviarProPai);
+}
+
+/* ----- editar / apagar diária ----- */
+const pessoaDoBloco = b => b.grupo === 'jose' ? 'José' : b.grupo === 'manu' ? 'Manu' : null;
+const podeMexer = b => !!pessoaDoBloco(b) && (ehAdmin() || pessoaDoBloco(b) === st.usuario.pessoa);
+const RE_REEMBOLSO = /\s*\|?\s*Reembolso R\$\s*([\d.,]+)/i;
+
+async function abrirDiaria(b, it) {
+  const d = it.diaria, pessoa = pessoaDoBloco(b);
+  if (!d.editavel) {
+    await dialogo(`<h2>${esc(it.titulo)}</h2><p>Essa diária já recebeu parte do pagamento, então fica travada no app para não bagunçar o que já foi recebido.</p><p class="dica">Se precisar mesmo mudar, ajuste pela planilha.</p>`,
+      [{ texto: 'Entendi', classe: 'primario', valor: null }]);
+    return;
+  }
+  const acao = await dialogo(`<h2>${esc(it.titulo)}</h2><p>Diária de ${esc(pessoa)} · <b class="num">${brl(d.valor)}</b>${d.obs ? `<br><span class="dica">${esc(d.obs)}</span>` : ''}</p>`,
+    [{ texto: 'Apagar', classe: 'perigo', valor: 'apagar' }, { texto: 'Editar', classe: 'primario', valor: 'editar' }, { texto: 'Cancelar', classe: 'secundario so-texto', valor: null }]);
+  if (acao === 'editar') {
+    const m = String(d.obs || '').match(RE_REEMBOLSO);
+    const reemb = m ? lerValor(m[1]) || 0 : 0;
+    st.lancar = {
+      modo: 'editar', pessoa, linha: d.linha, original: { data: d.data, valor: d.valor, obs: d.obs }, titulo: it.titulo,
+      data: d.data, valor: num2(d.valor - reemb), reembolso: reemb ? num2(reemb) : '', obs: String(d.obs || '').replace(RE_REEMBOLSO, '').trim(),
+      mostrarReembolso: reemb > 0, enviando: false
+    };
+    irPara('lancar');
+  } else if (acao === 'apagar') {
+    const ok = await dialogo(`<h2>Apagar diária?</h2><p>A diária de ${esc(pessoa)} em <b>${esc(it.titulo)}</b> (<b class="num">${brl(d.valor)}</b>) sai da planilha.</p>`,
+      [{ texto: 'Cancelar', valor: false }, { texto: 'Apagar', classe: 'perigo-cheio', valor: true }]);
+    if (!ok) return;
+    toast('Apagando…');
+    try {
+      const j = await chamar('apagar', { pessoa, linha: d.linha, original: { data: d.data, valor: d.valor, obs: d.obs }, idEnvio: novoId() });
+      vibrar(30); render();
+      toast(`Diária de ${j.dataTxt} apagada`);
+    } catch (e) { erroDeDiaria(e); }
+  }
+}
+function erroDeDiaria(e) {
+  toast(e.message, true);
+  if (/mudou na planilha|já recebeu pagamento/.test(e.message)) { st.lancar = null; sincronizar(false); }
 }
 
 /* ===== Tela 2: Lançar diária ===== */
@@ -275,10 +325,13 @@ function telaLancar() {
   const cfg = st.cfg;
   if (!st.lancar) st.lancar = { pessoa: ehAdmin() ? cfg.pessoaPadrao : st.usuario.pessoa, data: hojeISO(), valor: num2(cfg.valorDiaria), reembolso: '', obs: '', mostrarReembolso: false, enviando: false };
   const L = st.lancar;
+  const editando = L.modo === 'editar';
   const total = (lerValor(L.valor) || 0) + (lerValor(L.reembolso) || 0);
   return `
+    ${editando ? `<div class="editando"><span>Editando a diária de <b>${esc(L.pessoa)}</b><br><span class="dica">${esc(L.titulo)}</span></span>
+      <button type="button" class="chip" id="btnCancelarEdicao">Cancelar</button></div>` : ''}
     <form id="formLancar" class="form" autocomplete="off">
-      ${ehAdmin() ? `<div class="campo">De quem é a diária
+      ${editando ? '' : ehAdmin() ? `<div class="campo">De quem é a diária
         <div class="segmento" id="segPessoa">${['José', 'Manu'].map(p => `<button type="button" data-p="${p}" class="${L.pessoa === p ? 'sel' : ''}">${p}</button>`).join('')}</div></div>`
         : `<p class="dica">Diária de <b>${esc(st.usuario.pessoa)}</b></p>`}
       <label>Data
@@ -301,7 +354,7 @@ function telaLancar() {
         <textarea name="obs" rows="2" placeholder="Ex.: trabalhou até as 20h">${esc(L.obs)}</textarea>
       </label>
       <div class="resumo-lanc"><span>${esc(L.pessoa)} · ${dataBonita(L.data)}</span><b class="num">${brl(total)}</b></div>
-      <button class="btn primario" type="submit" ${L.enviando ? 'disabled' : ''}>${L.enviando ? '<span class="spin"></span> Gravando…' : 'Lançar diária'}</button>
+      <button class="btn primario" type="submit" ${L.enviando ? 'disabled' : ''}>${L.enviando ? '<span class="spin"></span> Gravando…' : editando ? 'Salvar alterações' : 'Lançar diária'}</button>
     </form>`;
 }
 function ligarLancar(tela) {
@@ -326,6 +379,8 @@ function ligarLancar(tela) {
     if (v > 0) { inp.value = num2(v); L[inp.name] = inp.value; }
   }));
   f.addEventListener('submit', e => { e.preventDefault(); enviarLancamento(false); });
+  const canc = $('#btnCancelarEdicao', tela);
+  if (canc) canc.addEventListener('click', () => { st.lancar = null; irPara('resumo'); });
 }
 async function enviarLancamento(confirmarDuplicado) {
   const L = st.lancar;
@@ -335,7 +390,10 @@ async function enviarLancamento(confirmarDuplicado) {
   if (isNaN(reembolso) || reembolso < 0) return toast('Reembolso inválido.', true);
   L.enviando = true; render();
   try {
-    const j = await chamar('lancar', { pessoa: L.pessoa, data: L.data, valor, reembolso, obs: L.obs, confirmarDuplicado, idEnvio: novoId() });
+    const editando = L.modo === 'editar';
+    const j = editando
+      ? await chamar('editar', { pessoa: L.pessoa, linha: L.linha, original: L.original, novo: { data: L.data, valor, reembolso, obs: L.obs }, confirmarDuplicado, idEnvio: novoId() })
+      : await chamar('lancar', { pessoa: L.pessoa, data: L.data, valor, reembolso, obs: L.obs, confirmarDuplicado, idEnvio: novoId() });
     L.enviando = false;
     if (j.duplicado) {
       render();
@@ -346,12 +404,12 @@ async function enviarLancamento(confirmarDuplicado) {
       return;
     }
     vibrar(30);
-    toast(`Diária de ${brl(j.valor)} lançada em ${j.dataTxt}`);
     st.lancar = null;
-    render();
+    if (editando) { toast(`Diária de ${j.dataTxt} atualizada`); irPara('resumo'); }
+    else { toast(`Diária de ${brl(j.valor)} lançada em ${j.dataTxt}`); render(); }
   } catch (e) {
     L.enviando = false; render();
-    toast(e.message, true);
+    erroDeDiaria(e);
   }
 }
 

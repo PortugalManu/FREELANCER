@@ -75,6 +75,15 @@ Para cortar o acesso de alguém: **Freelancers → App do celular → Revogar ac
 
 Esses testes foram rodados com uma cópia dos dados da planilha, simulando o Google por baixo (os testes não estão neste repositório porque ele é público e eles contêm os valores). Mesmo assim, o primeiro uso de verdade (de preferência na cópia) é a prova real.
 
+## Editar ou apagar uma diária
+
+No **Resumo**, abra o bloco e toque na diária: aparecem **Editar** e **Apagar**.
+
+- Só dá para editar ou apagar diárias que **ainda não receberam nenhum pagamento**. As pagas ou parciais aparecem com 🔒 e são ajustadas pela planilha, para não bagunçar o "Total Recebido" nem o RECEBIMENTOS.
+- Se a data mudar, a diária troca de lugar sozinha e continua dentro da soma do rodapé.
+- Antes de gravar, o script confere se a diária não mudou na planilha desde a última atualização do app.
+- Fica uma notinha na célula ("Editado pelo app em… Antes: …"), e a aba **LOG DO APP** registra quem lançou, editou ou apagou o quê, e quando.
+
 ## Deixando do seu jeito
 
 - **No app**, na aba **Do meu jeito**: cor, tema claro/escuro, letra dos números, cantos, saudação, emoji, valor padrão da diária e pessoa que já vem marcada. Fica salvo na planilha e vale em qualquer celular.

@@ -1,6 +1,6 @@
 // Guarda as telas do app no celular para abrir na hora (mesmo sem internet).
 // Os números sempre vêm da planilha (a API nunca passa por aqui).
-const VERSAO = 'diarias-v1';
+const VERSAO = 'diarias-v2';
 const ARQUIVOS = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png', 'icons/apple-touch-icon.png'];
 

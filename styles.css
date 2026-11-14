@@ -145,6 +145,14 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .item-titulo { display: block; font-weight: 600; font-size: 15px; }
 .item-sub { display: block; font-size: 13px; color: var(--muted); }
 .item-valor { font-weight: 700; white-space: nowrap; }
+.itens li { list-style: none; border-bottom: 1px solid var(--line); }
+.itens li:last-child { border-bottom: 0; }
+.itens li > .item { border-bottom: 0; }
+.item-btn { width: 100%; border: 0; background: none; text-align: left; cursor: pointer; align-items: center; }
+.item-btn:active { background: var(--surface-2); }
+.item-acao { width: 18px; height: 18px; color: var(--muted); }
+.itens-dica { padding: 0 16px 14px; margin: 0; }
+.editando { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-bottom: 14px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--accent-soft); border: 1.5px solid var(--accent); }
 
 /* ===== Formulários ===== */
 .form { display: grid; gap: 14px; }
@@ -179,6 +187,8 @@ textarea { resize: vertical; min-height: 64px; }
 .btn.primario { background: var(--accent); color: var(--on-accent); }
 .btn.secundario { background: var(--surface-2); color: var(--text); }
 .btn.perigo { background: none; color: var(--danger); border: 1.5px solid currentColor; }
+.btn.perigo-cheio { background: var(--danger); color: #fff; }
+.btn.so-texto { background: none; grid-column: 1 / -1; padding: 8px; font-weight: 700; color: var(--muted); }
 .btn .spin { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid currentColor; border-right-color: transparent; animation: gira .7s linear infinite; }
 
 .resumo-lanc { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--accent-soft); font-size: 14px; }
@@ -249,3 +259,4 @@ textarea { resize: vertical; min-height: 64px; }
 .offline { margin: 0 0 10px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--warn-soft); color: var(--warn); font-size: 13px; font-weight: 600; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+.dlg-acoes > .btn:only-child { grid-column: 1 / -1; }

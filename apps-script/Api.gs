@@ -3,7 +3,7 @@
  *
  * O app (PWA) conversa com este script por POST, em JSON:
  *   { token, acao, ...dados }
- * Ações: ping, resumo, abater, lancar, salvarConfig.
+ * Ações: ping, resumo, abater, lancar, editar, apagar, salvarConfig.
  *
  * As regras de negócio NÃO ficam aqui: o app chama as mesmas funções do menu
  * (abaterDiariasCore_, abaterExtraCore_, lerDias_, lerExtra_, gerarResumo_).
@@ -77,12 +77,18 @@ function rotear_(u, req) {
     }
 
     case 'lancar': {
-      const cfg = DIARIAS.find(d => d.pessoa === req.pessoa);
-      if (!cfg) throw new Error('Escolha de quem é a diária.');
-      if (u.papel !== 'admin' && u.pessoa !== cfg.pessoa) {
-        throw new Error(`Seu acesso só permite lançar diárias de ${u.pessoa}.`);
-      }
+      const cfg = cfgDaPessoa_(u, req.pessoa);
       return comGravacao_(req.idEnvio, () => lancarDiariaCore_(cfg, req, u.nome));
+    }
+
+    case 'editar': {
+      const cfg = cfgDaPessoa_(u, req.pessoa);
+      return comGravacao_(req.idEnvio, () => editarDiariaCore_(cfg, req, u.nome));
+    }
+
+    case 'apagar': {
+      const cfg = cfgDaPessoa_(u, req.pessoa);
+      return comGravacao_(req.idEnvio, () => apagarDiariaCore_(cfg, req, u.nome));
     }
 
     case 'salvarConfig':
@@ -120,85 +126,100 @@ function comGravacao_(idEnvio, fn) {
   });
 }
 
-/* ---------------- lançar diária ---------------- */
+/* ---------------- lançar / editar / apagar diária ---------------- */
 
-/**
- * Insere o dia NA POSIÇÃO DA DATA, sempre dentro do intervalo da soma do rodapé
- * (=SUM(B2:Bn) cresce sozinho porque a linha entra no meio do intervalo).
- * Grava data de verdade em A, número em B (sem fórmula) e a observação em C.
- * Se já existir diária na data, devolve { duplicado: true } sem gravar,
- * a menos que req.confirmarDuplicado seja true.
- */
-function lancarDiariaCore_(cfg, req, autor) {
-  const ss = SpreadsheetApp.getActive();
-  const tz = ss.getSpreadsheetTimeZone();
-  const sh = ss.getSheetByName(cfg.aba);
+// Confere a pessoa e o acesso de quem está mexendo
+function cfgDaPessoa_(u, pessoa) {
+  const cfg = DIARIAS.find(d => d.pessoa === pessoa);
+  if (!cfg) throw new Error('Escolha de quem é a diária.');
+  if (u.papel !== 'admin' && u.pessoa !== cfg.pessoa) {
+    throw new Error(`Seu acesso só permite mexer nas diárias de ${u.pessoa}.`);
+  }
+  return cfg;
+}
+
+function abaDiarias_(cfg) {
+  const sh = SpreadsheetApp.getActive().getSheetByName(cfg.aba);
   if (!sh) throw new Error(`Não encontrei a aba "${cfg.aba}".`);
+  return sh;
+}
 
-  const m = String(req.data || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+// Lê os campos do app → { data, total, obs }. O reembolso entra no valor e fica anotado na observação.
+function montarDiaria_(d) {
+  d = d || {};
+  const m = String(d.data || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) throw new Error('Data inválida.');
   const data = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 
-  const valor = round2_(sanitizeToNumber_(req.valor));
-  const reembolso = round2_(sanitizeToNumber_(req.reembolso) || 0);
+  const valor = round2_(sanitizeToNumber_(d.valor));
+  const reembolso = round2_(sanitizeToNumber_(d.reembolso) || 0);
   if (!(valor > 0)) throw new Error('Informe o valor da diária.');
   if (reembolso < 0) throw new Error('Reembolso inválido.');
-  const total = round2_(valor + reembolso);
 
-  let obs = String(req.obs || '').trim().slice(0, 300);
+  let obs = String(d.obs || '').trim().slice(0, 300);
   if (reembolso > 0.004) {
     const tag = `Reembolso R$ ${formatMoney_(reembolso)}`;
     obs = obs ? `${obs} | ${tag}` : tag;
   }
+  return { data, total: round2_(valor + reembolso), obs };
+}
 
-  // onde está cada dia
+// Onde está cada dia: última linha com dia, onde entra a data `chave` e quem já tem essa data.
+// `ignorar` = linha que não conta (a própria diária, quando é edição).
+function localizarDias_(sh, tz, chave, ignorar) {
   const lastRow = sh.getLastRow();
   const n = Math.max(0, lastRow - FIRST_ROW + 1);
   const dias = n ? sh.getRange(FIRST_ROW, COL_DIAS, n, 1).getValues() : [];
-  const chave = Utilities.formatDate(data, tz, 'yyyy-MM-dd');
-  let ultima = FIRST_ROW - 1;   // última linha com dia
-  let pos = null;               // primeira linha com data DEPOIS da nova
-  const mesmoDia = [];
+  const r = { ultima: FIRST_ROW - 1, pos: null, mesmoDia: [], qtd: 0 };
   for (let i = 0; i < dias.length; i++) {
     const d = dias[i][0];
     if (!d) break;
     const linha = FIRST_ROW + i;
-    ultima = linha;
-    if (d instanceof Date) {
-      const k = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
-      if (k === chave) mesmoDia.push(linha);
-      if (pos === null && k > chave) pos = linha;
-    }
+    r.ultima = linha;
+    r.qtd++;
+    if (linha === ignorar || !(d instanceof Date)) continue;
+    const k = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+    if (k === chave) r.mesmoDia.push(linha);
+    if (r.pos === null && k > chave) r.pos = linha;
   }
+  return r;
+}
 
-  if (mesmoDia.length && !req.confirmarDuplicado) {
-    return {
-      gravado: false,
-      duplicado: true,
-      dataTxt: formatDataBR_(data, tz),
-      existentes: mesmoDia.map(l => ({
-        valor: round2_(sanitizeToNumber_(sh.getRange(l, COL_JOSE).getValue())),
-        obs: String(sh.getRange(l, COL_OBS).getValue() || '')
-      }))
-    };
-  }
+function respostaDuplicado_(sh, tz, data, linhas) {
+  return {
+    gravado: false,
+    duplicado: true,
+    dataTxt: formatDataBR_(data, tz),
+    existentes: linhas.map(l => ({
+      valor: round2_(sanitizeToNumber_(sh.getRange(l, COL_JOSE).getValue())),
+      obs: String(sh.getRange(l, COL_OBS).getValue() || '')
+    }))
+  };
+}
 
+/**
+ * Insere o dia NA POSIÇÃO DA DATA, sempre dentro do intervalo da soma do rodapé
+ * (=SUM(B2:Bn) cresce sozinho porque a linha entra no meio do intervalo).
+ * Grava data de verdade em A, número em B (sem fórmula) e a observação em C. Devolve a linha.
+ */
+function inserirDiaria_(sh, cfg, dia, local, nota) {
   let alvo, ref;
-  if (ultima < FIRST_ROW) {
+  if (local.ultima < FIRST_ROW) {
     // aba sem nenhum dia: usa a primeira linha (só se estiver vazia mesmo)
     if (sh.getRange(FIRST_ROW, COL_JOSE).getFormula() || sh.getRange(FIRST_ROW, COL_JOSE).getValue() !== '') {
       throw new Error(`A aba "${cfg.aba}" não tem nenhum dia e a linha ${FIRST_ROW} não está livre. Lance o primeiro dia pela planilha.`);
     }
     alvo = FIRST_ROW;
     ref = null;
-  } else if (pos !== null) {
+  } else if (local.pos !== null) {
     // entra no meio: abre uma linha antes do primeiro dia mais novo
-    sh.insertRowBefore(pos);
-    alvo = pos;
-    ref = pos + 1;
+    sh.insertRowBefore(local.pos);
+    alvo = local.pos;
+    ref = local.pos + 1;
   } else {
     // entra no fim: abre a linha ANTES do último dia (garante que fica dentro da soma)
     // e desce o último dia para a linha nova; o dia novo fica logo abaixo dele.
+    const ultima = local.ultima;
     const notasUltimo = sh.getRange(ultima, 1, 1, COL_OBS).getNotes();
     sh.insertRowBefore(ultima);
     sh.getRange(ultima + 1, 1, 1, sh.getMaxColumns()).moveTo(sh.getRange(ultima, 1));
@@ -210,23 +231,129 @@ function lancarDiariaCore_(cfg, req, autor) {
   const linhaNova = sh.getRange(alvo, 1, 1, COL_OBS);
   if (ref) sh.getRange(ref, 1, 1, COL_OBS).copyFormatToRange(sh, 1, COL_OBS, alvo, alvo);
   linhaNova.clearNote();
-  linhaNova.setValues([[data, total, obs]]);
+  linhaNova.setValues([[dia.data, dia.total, dia.obs]]);
   sh.getRange(alvo, COL_JOSE).setFontColor('#000000');   // nunca nasce "verde" (pago)
-  addNote_(sh.getRange(alvo, COL_JOSE), `Lançado pelo app em ${formatDate_()} — ${autor}.`);
-  SpreadsheetApp.flush();
+  if (nota) sh.getRange(alvo, COL_JOSE).setNote(nota);
+  return alvo;
+}
 
-  gerarResumo_();
+/**
+ * Antes de editar/apagar: a linha ainda é a diária que o app mostrou?
+ * E ela não recebeu nenhum pagamento? (paga ou parcial → só pela planilha)
+ */
+function conferirDia_(sh, cfg, linha, orig, tz) {
+  linha = Number(linha);
+  if (!orig || !(linha >= FIRST_ROW)) throw new Error('Diária inválida. Atualize o app.');
+  const v = sh.getRange(linha, 1, 1, COL_OBS).getValues()[0];
+  const fonte = sh.getRange(linha, COL_JOSE).getFontColor();
+  const d = v[0];
+  const igual = d instanceof Date
+    && Utilities.formatDate(d, tz, 'yyyy-MM-dd') === orig.data
+    && Math.abs(round2_(sanitizeToNumber_(v[1])) - round2_(Number(orig.valor))) < 0.005
+    && String(v[2] || '') === String(orig.obs || '');
+  if (!igual) throw new Error('Essa diária mudou na planilha desde a última atualização. Atualize o app e tente de novo.');
+  if (isPaidFont_(fonte) || parseFalta_(String(v[2] || ''), cfg.pessoa) !== null) {
+    throw new Error('Essa diária já recebeu pagamento (total ou parcial). Para mexer nela, ajuste pela planilha.');
+  }
+  return { linha, data: d, dataTxt: formatDataBR_(d, tz), valor: round2_(sanitizeToNumber_(v[1])), obs: String(v[2] || '') };
+}
 
+function totaisDiarias_(sh, tz, cfg) {
   const itens = lerDias_(sh, tz, cfg.pessoa);
   return {
-    gravado: true,
-    pessoa: cfg.pessoa,
-    linha: alvo,
-    dataTxt: formatDataBR_(data, tz),
-    valor: total,
     totalLancado: round2_(itens.reduce((s, it) => s + it.valor, 0)),
     falta: round2_(itens.reduce((s, it) => s + it.restante, 0))
   };
+}
+
+// Se já existir diária na data, devolve { duplicado: true } sem gravar (a menos que req.confirmarDuplicado).
+function lancarDiariaCore_(cfg, req, autor) {
+  const tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+  const sh = abaDiarias_(cfg);
+  const dia = montarDiaria_(req);
+  const local = localizarDias_(sh, tz, Utilities.formatDate(dia.data, tz, 'yyyy-MM-dd'), null);
+  if (local.mesmoDia.length && !req.confirmarDuplicado) return respostaDuplicado_(sh, tz, dia.data, local.mesmoDia);
+
+  const alvo = inserirDiaria_(sh, cfg, dia, local, `Lançado pelo app em ${formatDate_()} — ${autor}.`);
+  SpreadsheetApp.flush();
+  registrarLogApp_(autor, 'Lançou diária', `${cfg.pessoa} · ${formatDataBR_(dia.data, tz)} · R$ ${formatMoneyBR_(dia.total)}${dia.obs ? ' · ' + dia.obs : ''}`);
+  gerarResumo_();
+
+  return Object.assign({ gravado: true, pessoa: cfg.pessoa, linha: alvo, dataTxt: formatDataBR_(dia.data, tz), valor: dia.total }, totaisDiarias_(sh, tz, cfg));
+}
+
+// Edita uma diária ainda não paga. Se a data mudar, ela muda de lugar (continua em ordem e dentro da soma).
+function editarDiariaCore_(cfg, req, autor) {
+  const tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+  const sh = abaDiarias_(cfg);
+  const orig = conferirDia_(sh, cfg, req.linha, req.original, tz);
+  const dia = montarDiaria_(req.novo);
+  const chave = Utilities.formatDate(dia.data, tz, 'yyyy-MM-dd');
+  const mudouData = chave !== req.original.data;
+
+  const local = localizarDias_(sh, tz, chave, orig.linha);
+  if (mudouData && local.mesmoDia.length && !req.confirmarDuplicado) return respostaDuplicado_(sh, tz, dia.data, local.mesmoDia);
+
+  const notaEd = `Editado pelo app em ${formatDate_()} — ${autor}. Antes: ${orig.dataTxt}, R$ ${formatMoney_(orig.valor)}${orig.obs ? `, "${orig.obs}"` : ''}.`;
+  let alvo;
+  if (!mudouData || local.qtd <= 1) {
+    // mesma data (ou é o único dia da aba): troca ali mesmo
+    sh.getRange(orig.linha, 1, 1, COL_OBS).setValues([[dia.data, dia.total, dia.obs]]);
+    addNote_(sh.getRange(orig.linha, COL_JOSE), notaEd);
+    alvo = orig.linha;
+  } else {
+    // data nova: tira a linha e coloca de novo no lugar certo, levando a notinha
+    const notaAntiga = sh.getRange(orig.linha, COL_JOSE).getNote();
+    sh.deleteRow(orig.linha);
+    alvo = inserirDiaria_(sh, cfg, dia, localizarDias_(sh, tz, chave, null), notaAntiga ? `${notaAntiga}\n${notaEd}` : notaEd);
+  }
+  SpreadsheetApp.flush();
+  registrarLogApp_(autor, 'Editou diária',
+    `${cfg.pessoa} · ${orig.dataTxt} R$ ${formatMoneyBR_(orig.valor)} → ${formatDataBR_(dia.data, tz)} R$ ${formatMoneyBR_(dia.total)}${dia.obs ? ' · ' + dia.obs : ''}`);
+  gerarResumo_();
+
+  return Object.assign({ gravado: true, pessoa: cfg.pessoa, linha: alvo, dataTxt: formatDataBR_(dia.data, tz), valor: dia.total }, totaisDiarias_(sh, tz, cfg));
+}
+
+// Apaga uma diária ainda não paga. A soma do rodapé encolhe sozinha.
+function apagarDiariaCore_(cfg, req, autor) {
+  const tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+  const sh = abaDiarias_(cfg);
+  const orig = conferirDia_(sh, cfg, req.linha, req.original, tz);
+  const local = localizarDias_(sh, tz, '', null);
+
+  if (local.qtd <= 1) {
+    // único dia da aba: só limpa (apagar a linha quebraria a soma do rodapé, que ficaria sem intervalo)
+    const r = sh.getRange(orig.linha, 1, 1, COL_OBS);
+    r.clearContent();
+    r.clearNote();
+    sh.getRange(orig.linha, COL_JOSE).setFontColor('#000000');
+  } else {
+    sh.deleteRow(orig.linha);
+  }
+  SpreadsheetApp.flush();
+  registrarLogApp_(autor, 'Apagou diária', `${cfg.pessoa} · ${orig.dataTxt} · R$ ${formatMoneyBR_(orig.valor)}${orig.obs ? ' · ' + orig.obs : ''}`);
+  gerarResumo_();
+
+  return Object.assign({ gravado: true, pessoa: cfg.pessoa, dataTxt: orig.dataTxt, valor: orig.valor }, totaisDiarias_(sh, tz, cfg));
+}
+
+// Aba "LOG DO APP": quem lançou, editou ou apagou o quê, e quando. Nunca atrapalha a gravação.
+const ABA_LOG_APP = 'LOG DO APP';
+function registrarLogApp_(quem, acao, detalhe) {
+  try {
+    const ss = SpreadsheetApp.getActive();
+    let sh = ss.getSheetByName(ABA_LOG_APP);
+    if (!sh) {
+      sh = ss.insertSheet(ABA_LOG_APP);
+      sh.getRange(1, 1, 1, 4).setValues([['Quando', 'Quem', 'O quê', 'Detalhe']])
+        .setFontWeight('bold').setBackground('#434343').setFontColor('#ffffff');
+      sh.setFrozenRows(1);
+      sh.setColumnWidth(1, 140); sh.setColumnWidth(2, 90); sh.setColumnWidth(3, 120); sh.setColumnWidth(4, 520);
+    }
+    sh.appendRow([new Date(), quem, acao, detalhe]);
+    sh.getRange(sh.getLastRow(), 1).setNumberFormat('dd/MM/yyyy HH:mm');
+  } catch (e) {}
 }
 
 /* ---------------- resumo para o app ---------------- */
@@ -298,7 +425,13 @@ function blocoDias_(id, titulo, grupo, itens) {
     qtd: itens.length,
     unidade: itens.length === 1 ? 'dia' : 'dias',
     falta: round2_(itens.reduce((s, it) => s + it.restante, 0)),
-    itens: itens.map(it => ({ titulo: it.dataTxt, sub: it.obs, valor: it.restante }))
+    itens: itens.map(it => ({
+      titulo: it.dataTxt,
+      sub: it.obs,
+      valor: it.restante,
+      // o app usa para editar/apagar; o script confere tudo de novo antes de mexer
+      diaria: { linha: it.linha, data: it.dataISO, valor: it.valor, obs: it.obsBruta, editavel: it.editavel }
+    }))
   };
 }
 
