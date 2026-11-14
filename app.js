@@ -1,6 +1,7 @@
 /* Diárias — app do celular (PWA).
  * Só desenha as telas. Toda regra de negócio fica no Apps Script da planilha. */
 'use strict';
+const APP_VERSAO = 3;
 
 /* ---------------- guardado no aparelho ---------------- */
 const K = { api: 'diarias.api', chave: 'diarias.chave', usuario: 'diarias.usuario', cfg: 'diarias.cfg', resumo: 'diarias.resumo' };
@@ -237,6 +238,7 @@ function telaResumo() {
   const itens = pend.reduce((s, b) => s + b.qtd, 0);
   return `
     ${st.offline ? '<p class="offline">Sem conexão: mostrando os últimos números salvos.</p>' : ''}
+    ${scriptDesatualizado() ? '<p class="offline">O script da planilha está desatualizado: por isso não aparece editar/apagar. Cole os arquivos novos no Apps Script e implante uma <b>Nova versão</b> (Implantar → Gerenciar implantações → ✏️).</p>' : ''}
     <section class="hero">
       <p class="hero-rotulo">Total que o pai deve</p>
       <p class="hero-valor num">${brl(r.total)}</p>
@@ -281,6 +283,12 @@ function ligarResumo(tela) {
 }
 
 /* ----- editar / apagar diária ----- */
+// script antigo não manda os dados de cada diária (sem eles não dá para editar/apagar)
+function scriptDesatualizado() {
+  const r = st.resumo;
+  if (!r || st.offline) return false;
+  return r.blocos.some(b => (b.grupo === 'jose' || b.grupo === 'manu') && b.itens.length && !b.itens.some(it => it.diaria));
+}
 const pessoaDoBloco = b => b.grupo === 'jose' ? 'José' : b.grupo === 'manu' ? 'Manu' : null;
 const podeMexer = b => !!pessoaDoBloco(b) && (ehAdmin() || pessoaDoBloco(b) === st.usuario.pessoa);
 const RE_REEMBOLSO = /\s*\|?\s*Reembolso R\$\s*([\d.,]+)/i;
@@ -598,7 +606,8 @@ function telaAjustes() {
       ${st.instalar ? '<button class="btn secundario" id="btnInstalar">Instalar na tela inicial</button>' : ''}
       <button class="btn perigo" id="btnSair">Sair deste celular</button>
     </section>
-    <p class="dica" style="text-align:center;margin-top:18px">Suas preferências ficam salvas na planilha: valem em qualquer celular em que você entrar.</p>`;
+    <p class="dica" style="text-align:center;margin-top:18px">Suas preferências ficam salvas na planilha: valem em qualquer celular em que você entrar.</p>
+    <p class="dica" style="text-align:center">App versão ${APP_VERSAO} · script da planilha ${st.resumo && st.resumo.versaoScript ? 'versão ' + st.resumo.versaoScript : scriptDesatualizado() ? 'desatualizado' : 'versão 2'}</p>`;
 }
 function ligarAjustes(tela) {
   const c = st.rascunhoCfg;
@@ -725,7 +734,20 @@ function shade(hex, f) {
 /* ---------------- instalação / offline ---------------- */
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); st.instalar = e; if (st.tela === 'ajustes') render(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // quando chega versão nova do app, recarrega uma vez sozinho
+  const tinhaControle = !!navigator.serviceWorker.controller;
+  let recarregou = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!tinhaControle || recarregou) return;
+    recarregou = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+    .then(reg => {
+      reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+    })
+    .catch(() => {});
 }
 
 iniciar();

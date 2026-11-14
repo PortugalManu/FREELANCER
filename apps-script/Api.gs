@@ -18,6 +18,7 @@ const APP_PROP_URL_PWA = 'APP_URL_PWA';      // endereço do app (GitHub Pages)
 const APP_PROP_URL_API = 'APP_URL_API';      // URL do App da Web (termina em /exec)
 const APP_PROP_CFG = 'APP_CFG_';             // + nome → preferências visuais da pessoa
 const APP_VALOR_DIARIA = 170;
+const VERSAO_SCRIPT = 3;   // aparece no app em "Do meu jeito" (para saber se a implantação nova pegou)
 
 const ALVOS_ABATER = {
   jose:    { tipo: 'diarias', cfg: () => DIARIAS[0] },
@@ -413,7 +414,8 @@ function dadosResumo_() {
     total,
     blocos,
     alvos,
-    atualizadoEm: Utilities.formatDate(new Date(), tz, "dd/MM/yyyy 'às' HH:mm")
+    atualizadoEm: Utilities.formatDate(new Date(), tz, "dd/MM/yyyy 'às' HH:mm"),
+    versaoScript: VERSAO_SCRIPT
   };
 }
 
