@@ -1,7 +1,7 @@
 /* Diárias — app do celular (PWA).
  * Só desenha as telas. Toda regra de negócio fica no Apps Script da planilha. */
 'use strict';
-const APP_VERSAO = 3;
+const APP_VERSAO = 4;
 
 /* ---------------- guardado no aparelho ---------------- */
 const K = { api: 'diarias.api', chave: 'diarias.chave', usuario: 'diarias.usuario', cfg: 'diarias.cfg', resumo: 'diarias.resumo' };
@@ -328,8 +328,128 @@ function erroDeDiaria(e) {
   if (/mudou na planilha|já recebeu pagamento/.test(e.message)) { st.lancar = null; sincronizar(false); }
 }
 
-/* ===== Tela 2: Lançar diária ===== */
+/* ===== Tela 2: Lançar (diária ou compra no cartão) ===== */
 function telaLancar() {
+  const editando = st.lancar && st.lancar.modo === 'editar';
+  if (!ehAdmin() || editando) { st.lancarTipo = 'diaria'; return telaDiaria(); }
+  const tipo = st.lancarTipo || 'diaria';
+  return `<div class="segmento tipo-lanc" id="segTipo">
+      <button type="button" data-t="diaria" class="${tipo === 'diaria' ? 'sel' : ''}">Diária</button>
+      <button type="button" data-t="compra" class="${tipo === 'compra' ? 'sel' : ''}">Compra no cartão</button>
+    </div>${tipo === 'compra' ? telaCompra() : telaDiaria()}`;
+}
+function ligarLancar(tela) {
+  tela.querySelectorAll('#segTipo button').forEach(b => b.addEventListener('click', () => { st.lancarTipo = b.dataset.t; render(); }));
+  (st.lancarTipo === 'compra' ? ligarCompra : ligarDiaria)(tela);
+}
+
+/* ----- compra no cartão ----- */
+const DESCRICOES = ['Combustível', 'Lanche', 'Almoço', 'Pedágio', 'Comida'];
+// mesma regra do script: fecha dia 1, vence dia 9
+function primeiraFatura(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  for (let i = 0; i < 3; i++) {
+    const fech = new Date(y, m - 1 + i, 1, 23, 59, 59);
+    if (dt <= fech) return new Date(y, m - 1 + i, 9);
+  }
+  return new Date(y, m, 9);
+}
+const ddmm = dt => dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+function parcelasTexto(C) {
+  const total = lerValor(C.valor) || 0, n = C.parcelas;
+  const venc = primeiraFatura(C.data);
+  if (n === 1) return `À vista · fatura de ${ddmm(venc)}`;
+  const base = Math.floor(Math.round(total * 100) / n) / 100;
+  const ult = new Date(venc.getFullYear(), venc.getMonth() + n - 1, 9);
+  return `${n}x de ${brl(base)} · faturas de ${ddmm(venc)} a ${ddmm(ult)}`;
+}
+function telaCompra() {
+  if (!st.compra) st.compra = { cartao: guardado.ler('diarias.ultimoCartao') || 'Manu', data: hojeISO(), descricao: '', valor: '', parcelas: 1, obs: '', enviando: false };
+  const C = st.compra;
+  return `
+    <form id="formCompra" class="form" autocomplete="off">
+      <div class="campo">Cartão
+        <div class="segmento" id="segCartaoCompra">${['José', 'Manu'].map(c => `<button type="button" data-c="${c}" class="${C.cartao === c ? 'sel' : ''}">${c}</button>`).join('')}</div></div>
+      <label>Data da compra
+        <input type="date" name="data" value="${C.data}" max="${hojeISO(1)}" required>
+        <div class="chips">
+          <button type="button" class="chip ${C.data === hojeISO() ? 'sel' : ''}" data-dia="0">Hoje</button>
+          <button type="button" class="chip ${C.data === hojeISO(-1) ? 'sel' : ''}" data-dia="-1">Ontem</button>
+          <button type="button" class="chip ${C.data === hojeISO(-2) ? 'sel' : ''}" data-dia="-2">Anteontem</button>
+        </div>
+      </label>
+      <label>O que foi
+        <input name="descricao" maxlength="80" value="${esc(C.descricao)}" placeholder="Ex.: Combustível" required>
+        <div class="chips">${DESCRICOES.map(d => `<button type="button" class="chip ${C.descricao === d ? 'sel' : ''}" data-desc="${d}">${d}</button>`).join('')}</div>
+      </label>
+      <label>Valor ${C.parcelas > 1 ? 'total' : ''}
+        <div class="input-moeda"><span>R$</span><input name="valor" inputmode="decimal" value="${esc(C.valor)}" placeholder="0,00" required></div>
+      </label>
+      <div class="campo">Parcelas
+        <div class="stepper">
+          <button type="button" class="btn-icone" data-parc="-1" aria-label="Menos parcelas" ${C.parcelas <= 1 ? 'disabled' : ''}>−</button>
+          <span class="num"><b>${C.parcelas}x</b>${C.parcelas === 1 ? ' (à vista)' : ''}</span>
+          <button type="button" class="btn-icone" data-parc="1" aria-label="Mais parcelas" ${C.parcelas >= 24 ? 'disabled' : ''}>+</button>
+        </div>
+      </div>
+      <label>Observação <span class="dica" style="display:inline">(opcional)</span>
+        <input name="obs" maxlength="200" value="${esc(C.obs)}" placeholder="Ex.: posto da BR-060">
+      </label>
+      <div class="resumo-lanc"><span id="txtParcelas">${parcelasTexto(C)}</span><b class="num" id="txtTotalCompra">${brl(lerValor(C.valor) || 0)}</b></div>
+      <button class="btn primario" type="submit" ${C.enviando ? 'disabled' : ''}>${C.enviando ? '<span class="spin"></span> Gravando…' : 'Lançar compra'}</button>
+    </form>`;
+}
+function ligarCompra(tela) {
+  const C = st.compra;
+  const f = $('#formCompra', tela);
+  const atualizar = () => { $('#txtParcelas', tela).textContent = parcelasTexto(C); $('#txtTotalCompra', tela).textContent = brl(lerValor(C.valor) || 0); };
+  f.addEventListener('input', e => {
+    const n = e.target.name;
+    if (n in C) C[n] = e.target.value;
+    if (n === 'data') { render(); return; }
+    if (n === 'descricao') f.querySelectorAll('[data-desc]').forEach(b => b.classList.toggle('sel', b.dataset.desc === C.descricao));
+    atualizar();
+  });
+  f.querySelectorAll('#segCartaoCompra button').forEach(b => b.addEventListener('click', () => { C.cartao = b.dataset.c; render(); }));
+  f.querySelectorAll('[data-dia]').forEach(b => b.addEventListener('click', () => { C.data = hojeISO(Number(b.dataset.dia)); render(); }));
+  f.querySelectorAll('[data-desc]').forEach(b => b.addEventListener('click', () => { C.descricao = b.dataset.desc; render(); $('input[name="valor"]').focus(); }));
+  f.querySelectorAll('[data-parc]').forEach(b => b.addEventListener('click', () => { C.parcelas = Math.min(24, Math.max(1, C.parcelas + Number(b.dataset.parc))); render(); }));
+  const v = f.querySelector('input[name="valor"]');
+  v.addEventListener('blur', () => { const x = lerValor(v.value); if (x > 0) { v.value = num2(x); C.valor = v.value; } });
+  f.addEventListener('submit', e => { e.preventDefault(); enviarCompra(false); });
+}
+async function enviarCompra(confirmarDuplicado) {
+  const C = st.compra;
+  if (C.enviando) return;
+  const valor = lerValor(C.valor);
+  if (!C.descricao.trim()) return toast('Diga o que foi a compra.', true);
+  if (!(valor > 0)) return toast('Informe o valor da compra.', true);
+  C.enviando = true; render();
+  try {
+    const j = await chamar('lancarCompra', { data: C.data, descricao: C.descricao, cartao: C.cartao, valor, parcelas: C.parcelas, obs: C.obs, confirmarDuplicado, idEnvio: novoId() });
+    C.enviando = false;
+    if (j.duplicado) {
+      render();
+      const lista = j.existentes.map(x => `<li><b class="num">${brl(x.valor)}</b> · ${esc(x.obs)}</li>`).join('');
+      const ok = await dialogo(`<h2>Parece repetida</h2><p>Já tem compra igual em <b>${esc(j.dataTxt)}</b>:</p><ul style="margin:0;padding-left:20px">${lista}</ul><p>Lançar mesmo assim?</p>`,
+        [{ texto: 'Cancelar', valor: false }, { texto: 'Lançar', classe: 'primario', valor: true }]);
+      if (ok) return enviarCompra(true);
+      return;
+    }
+    vibrar(30);
+    guardado.gravar('diarias.ultimoCartao', C.cartao);
+    st.compra = { cartao: C.cartao, data: C.data, descricao: '', valor: '', parcelas: 1, obs: '', enviando: false };
+    render();
+    toast(`${j.descricao} · ${brl(j.total)}${j.parcelas > 1 ? ` em ${j.parcelas}x` : ''} no cartão ${j.cartao}`);
+  } catch (e) {
+    C.enviando = false; render();
+    toast(e.message, true);
+  }
+}
+
+/* ----- diária ----- */
+function telaDiaria() {
   const cfg = st.cfg;
   if (!st.lancar) st.lancar = { pessoa: ehAdmin() ? cfg.pessoaPadrao : st.usuario.pessoa, data: hojeISO(), valor: num2(cfg.valorDiaria), reembolso: '', obs: '', mostrarReembolso: false, enviando: false };
   const L = st.lancar;
@@ -365,7 +485,7 @@ function telaLancar() {
       <button class="btn primario" type="submit" ${L.enviando ? 'disabled' : ''}>${L.enviando ? '<span class="spin"></span> Gravando…' : editando ? 'Salvar alterações' : 'Lançar diária'}</button>
     </form>`;
 }
-function ligarLancar(tela) {
+function ligarDiaria(tela) {
   const L = st.lancar;
   const f = $('#formLancar', tela);
   const atualizarTotal = () => {

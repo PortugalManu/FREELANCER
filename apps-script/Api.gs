@@ -3,7 +3,7 @@
  *
  * O app (PWA) conversa com este script por POST, em JSON:
  *   { token, acao, ...dados }
- * Ações: ping, resumo, abater, lancar, editar, apagar, salvarConfig.
+ * Ações: ping, resumo, abater, lancar, editar, apagar, lancarCompra, salvarConfig.
  *
  * As regras de negócio NÃO ficam aqui: o app chama as mesmas funções do menu
  * (abaterDiariasCore_, abaterExtraCore_, lerDias_, lerExtra_, gerarResumo_).
@@ -18,7 +18,7 @@ const APP_PROP_URL_PWA = 'APP_URL_PWA';      // endereço do app (GitHub Pages)
 const APP_PROP_URL_API = 'APP_URL_API';      // URL do App da Web (termina em /exec)
 const APP_PROP_CFG = 'APP_CFG_';             // + nome → preferências visuais da pessoa
 const APP_VALOR_DIARIA = 170;
-const VERSAO_SCRIPT = 3;   // aparece no app em "Do meu jeito" (para saber se a implantação nova pegou)
+const VERSAO_SCRIPT = 4;   // aparece no app em "Do meu jeito" (para saber se a implantação nova pegou)
 
 const ALVOS_ABATER = {
   jose:    { tipo: 'diarias', cfg: () => DIARIAS[0] },
@@ -91,6 +91,10 @@ function rotear_(u, req) {
       const cfg = cfgDaPessoa_(u, req.pessoa);
       return comGravacao_(req.idEnvio, () => apagarDiariaCore_(cfg, req, u.nome));
     }
+
+    case 'lancarCompra':
+      if (u.papel !== 'admin') throw new Error('Seu acesso não permite lançar compras nos cartões.');
+      return comGravacao_(req.idEnvio, () => lancarCompraCore_(req, u.nome));
 
     case 'salvarConfig':
       return { config: salvarConfig_(u, req.config || {}) };
@@ -337,6 +341,111 @@ function apagarDiariaCore_(cfg, req, autor) {
   gerarResumo_();
 
   return Object.assign({ gravado: true, pessoa: cfg.pessoa, dataTxt: orig.dataTxt, valor: orig.valor }, totaisDiarias_(sh, tz, cfg));
+}
+
+/* ---------------- compras nos cartões ---------------- */
+
+const COL_OBS_CARTAO = 8;   // H — Observação da compra na aba CARTÕES
+
+// "Caminhao 2/4" → "caminhao" (para achar compra repetida)
+function descricaoBase_(s) {
+  return String(s || '').replace(/\s*\d+\s*\/\s*\d+\s*$/, '').trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/**
+ * Lança uma compra na aba CARTÕES, igual a fazer na mão:
+ * Data (A), Descrição (B), Cartão (C), Valor (D) e Observação (H). Pago/Falta/Status são as fórmulas da aba.
+ * Sempre na primeira linha livre DEPOIS da última compra (as fórmulas abatem em ordem de linha
+ * e a tabela de pagamentos fica nas mesmas linhas, então não insere nem apaga linha no meio).
+ * Parcelado: uma linha por parcela, "Descrição 1/N", "2/N"… (é assim que o RESUMO sabe a fatura de cada uma).
+ */
+function lancarCompraCore_(req, autor) {
+  const cfg = ABAS_EXTRAS[0];
+  const ss = SpreadsheetApp.getActive();
+  const tz = ss.getSpreadsheetTimeZone();
+  const sh = ss.getSheetByName(cfg.aba);
+  if (!sh) throw new Error(`Não encontrei a aba "${cfg.aba}".`);
+
+  const m = String(req.data || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) throw new Error('Data inválida.');
+  const data = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const descricao = String(req.descricao || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  if (!descricao) throw new Error('Informe a descrição da compra.');
+  if (/\d+\s*\/\s*\d+\s*$/.test(descricao)) throw new Error('Não coloque "1/4" na descrição: use o campo Parcelas.');
+  const cartao = normalizarCartao_(req.cartao);
+  if (!cartao) throw new Error('Escolha o cartão (José ou Manu).');
+  const total = round2_(sanitizeToNumber_(req.valor));
+  if (!(total > 0)) throw new Error('Informe o valor da compra.');
+  const n = Math.floor(Number(req.parcelas) || 1);
+  if (n < 1 || n > 24) throw new Error('Parcelas: de 1 a 24.');
+  const obs = String(req.obs || '').trim().slice(0, 200);
+
+  // valor de cada parcela (centavos que sobram vão na 1ª)
+  const centavos = Math.round(total * 100);
+  const base = Math.floor(centavos / n);
+  const valores = Array.from({ length: n }, (_, i) => (base + (i === 0 ? centavos - base * n : 0)) / 100);
+
+  // onde termina a lista de compras (olha só A:D; E:G têm fórmulas até lá embaixo)
+  const nLinhas = Math.max(0, sh.getMaxRows() - EXTRA_FIRST_ROW + 1);
+  const vals = nLinhas ? sh.getRange(EXTRA_FIRST_ROW, 1, nLinhas, 4).getValues() : [];
+  let ultimo = -1;
+  vals.forEach((r, i) => { if (r.some(v => v !== '' && v !== null)) ultimo = i; });
+
+  // compra repetida? (mesma data, cartão, descrição e valor)
+  if (!req.confirmarDuplicado) {
+    const chave = Utilities.formatDate(data, tz, 'yyyy-MM-dd');
+    const iguais = vals.filter(r => {
+      const d = parseDataBR_(r[0]);
+      return d && Utilities.formatDate(d, tz, 'yyyy-MM-dd') === chave
+        && normalizarCartao_(r[2]) === cartao
+        && descricaoBase_(r[1]) === descricaoBase_(descricao)
+        && Math.abs(round2_(sanitizeToNumber_(r[3])) - valores[0]) < 0.005;
+    });
+    if (iguais.length) {
+      return {
+        gravado: false,
+        duplicado: true,
+        dataTxt: formatDataBR_(data, tz),
+        existentes: iguais.map(r => ({ valor: round2_(sanitizeToNumber_(r[3])), obs: `${r[1]} · cartão ${r[2]}` }))
+      };
+    }
+  }
+
+  const inicio = EXTRA_FIRST_ROW + ultimo + 1;
+  const fim = inicio + n - 1;
+  if (fim > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), fim - sh.getMaxRows());
+
+  // garante as fórmulas de Pago/Falta/Status (copia da linha de cima se faltar)
+  const colPago = cfg.colValor + 1;   // E
+  const ref = inicio - 1 >= EXTRA_FIRST_ROW ? inicio - 1 : null;
+  for (let r = inicio; r <= fim; r++) {
+    if (sh.getRange(r, colPago).getFormula()) continue;
+    if (!ref) throw new Error(`A linha ${r} da aba "${cfg.aba}" não tem as fórmulas de Pago/Falta/Status. Lance a primeira compra pela planilha.`);
+    sh.getRange(ref, colPago, 1, 3).copyTo(sh.getRange(r, colPago, 1, 3));
+    sh.getRange(ref, 1, 1, COL_OBS_CARTAO).copyFormatToRange(sh, 1, COL_OBS_CARTAO, r, r);
+  }
+
+  sh.getRange(inicio, 1, n, 4).setValues(valores.map((v, i) => [data, n > 1 ? `${descricao} ${i + 1}/${n}` : descricao, cartao, v]));
+  if (obs) sh.getRange(inicio, COL_OBS_CARTAO, n, 1).setValues(valores.map(() => [obs]));
+  SpreadsheetApp.flush();
+
+  registrarLogApp_(autor, 'Lançou compra',
+    `Cartão ${cartao} · ${formatDataBR_(data, tz)} · ${descricao} · R$ ${formatMoneyBR_(total)}${n > 1 ? ` em ${n}x` : ''}${obs ? ' · ' + obs : ''}`);
+  gerarResumo_();
+
+  return {
+    gravado: true,
+    cartao,
+    descricao,
+    total,
+    parcelas: n,
+    valores,
+    linhas: [inicio, fim],
+    dataTxt: formatDataBR_(data, tz),
+    primeiraFatura: formatDataBR_(primeiroVencimentoFatura_(data), tz),
+    faltaCartao: faltaPorCartao_(cfg, tz, true)[cartao]
+  };
 }
 
 // Aba "LOG DO APP": quem lançou, editou ou apagou o quê, e quando. Nunca atrapalha a gravação.

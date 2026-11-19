@@ -75,6 +75,15 @@ Para cortar o acesso de alguém: **Freelancers → App do celular → Revogar ac
 
 Esses testes foram rodados com uma cópia dos dados da planilha, simulando o Google por baixo (os testes não estão neste repositório porque ele é público e eles contêm os valores). Mesmo assim, o primeiro uso de verdade (de preferência na cópia) é a prova real.
 
+## Lançar compra no cartão
+
+Na aba **Lançar**, escolha **Compra no cartão** no topo e preencha cartão (José ou Manu), data, o que foi, valor e parcelas.
+
+- A compra entra na aba **CARTÕES**, na primeira linha livre depois da última compra, igual a fazer na mão. Pago, Falta e Status continuam sendo as fórmulas da aba.
+- **Parcelado:** você digita o valor **total**. O app cria uma linha por parcela ("Pneu 1/3", "Pneu 2/3"…), e os centavos que sobram vão na 1ª. Antes de lançar, ele mostra em quais faturas as parcelas caem. No Resumo, cada parcela só aparece quando chega a fatura dela, igual ao RESUMO da planilha.
+- Se já existir uma compra igual (mesma data, cartão, descrição e valor), o app avisa antes.
+- Por enquanto, editar ou apagar compra continua sendo pela planilha.
+
 ## Editar ou apagar uma diária
 
 No **Resumo**, abra o bloco e toque na diária: aparecem **Editar** e **Apagar**.

@@ -260,3 +260,9 @@ textarea { resize: vertical; min-height: 64px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 .dlg-acoes > .btn:only-child { grid-column: 1 / -1; }
+.tipo-lanc { margin-bottom: 16px; }
+.stepper { display: flex; align-items: center; gap: 16px; }
+.stepper .btn-icone { font-size: 24px; font-weight: 700; color: var(--accent-strong); }
+.stepper .btn-icone:disabled { opacity: .4; }
+.stepper span { min-width: 110px; text-align: center; font-size: 18px; color: var(--text); }
+.resumo-lanc b { white-space: nowrap; margin-left: 12px; }
