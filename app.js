@@ -1,7 +1,7 @@
 /* Diárias — app do celular (PWA).
  * Só desenha as telas. Toda regra de negócio fica no Apps Script da planilha. */
 'use strict';
-const APP_VERSAO = 4;
+const APP_VERSAO = 5;
 
 /* ---------------- guardado no aparelho ---------------- */
 const K = { api: 'diarias.api', chave: 'diarias.chave', usuario: 'diarias.usuario', cfg: 'diarias.cfg', resumo: 'diarias.resumo' };
@@ -819,20 +819,32 @@ function desenharResumo(r) {
     txt(brl(r.total), P + 40, y + 150, `800 84px ${fNum}`, onAccent);
     y += 230;
     if (!blocos.length) { txt('Tudo pago! ✅', P, y + 40, `700 36px ${fTxt}`, '#138a4a'); y += 80; }
+    // cada seção num cartão de cor clara própria, com faixa e título na cor forte
+    let mesJose = 0;
     blocos.forEach(b => {
-      txt(b.titulo, P, y + 40, `800 36px ${fTxt}`, '#17151f', 'left', 640);
-      txt(brl(b.falta), W - P, y + 40, `800 36px ${fNum}`, shade(accent, -0.25), 'right');
-      txt(`${b.qtd} ${b.unidade}`, P, y + 80, `500 26px ${fTxt}`, '#6b6878');
-      y += 104;
+      const cor = b.grupo === 'jose' ? COR_SECAO[mesJose++ % 2 ? 'jose2' : 'jose'] : (COR_SECAO[b.grupo] || COR_SECAO.jose);
+      const altItens = b.itens.reduce((h, it) => h + 44 + (it.sub ? 36 : 0) + 8, 0);
+      const h = 28 + 104 + altItens + 20;
+      if (real) {
+        ctx.fillStyle = cor.fundo; roundRect(ctx, P, y, W - 2 * P, h, 28); ctx.fill();
+        ctx.save(); roundRect(ctx, P, y, W - 2 * P, h, 28); ctx.clip();
+        ctx.fillStyle = cor.forte; ctx.fillRect(P, y, 12, h); ctx.restore();
+      }
+      const x = P + 40, xd = W - P - 32;
+      let yy = y + 28;
+      txt(b.titulo, x, yy + 40, `800 36px ${fTxt}`, cor.forte, 'left', 560);
+      txt(brl(b.falta), xd, yy + 40, `800 36px ${fNum}`, cor.forte, 'right');
+      txt(`${b.qtd} ${b.unidade}`, x, yy + 80, `500 26px ${fTxt}`, '#5f5b6b');
+      yy += 104;
+      if (real) { ctx.fillStyle = cor.linha; ctx.fillRect(x, yy - 10, xd - x, 2); }
       b.itens.forEach(it => {
-        txt(it.titulo, P + 24, y + 30, `600 28px ${fTxt}`, '#2a2735', 'left', 700);
-        txt(brl(it.valor), W - P, y + 30, `600 28px ${fNum}`, '#2a2735', 'right');
-        y += 44;
-        if (it.sub) { txt(it.sub, P + 24, y + 22, `400 24px ${fTxt}`, '#8a8697', 'left', W - 2 * P - 24); y += 36; }
-        y += 8;
+        txt(it.titulo, x, yy + 30, `600 28px ${fTxt}`, '#2a2735', 'left', 640);
+        txt(brl(it.valor), xd, yy + 30, `600 28px ${fNum}`, '#2a2735', 'right');
+        yy += 44;
+        if (it.sub) { txt(it.sub, x, yy + 22, `400 24px ${fTxt}`, '#6f6b7c', 'left', xd - x); yy += 36; }
+        yy += 8;
       });
-      if (real) { ctx.fillStyle = '#e4e1ec'; ctx.fillRect(P, y + 10, W - 2 * P, 2); }
-      y += 40;
+      y += h + 28;
     });
     return y + P - 20;
   };
@@ -841,6 +853,14 @@ function desenharResumo(r) {
   desenhar(true);
   return new Promise(res => cv.toBlob(res, 'image/png'));
 }
+// cores das seções na imagem pro pai (fundo claro + cor forte para faixa e título)
+const COR_SECAO = {
+  jose:    { fundo: '#e8f0ff', forte: '#1d4ed8', linha: '#c9d9fb' },   // azul
+  jose2:   { fundo: '#e3f4fb', forte: '#0e7490', linha: '#bfe3f0' },   // azul-piscina (2º mês do José)
+  cartoes: { fundo: '#fff3df', forte: '#b45309', linha: '#f6dcb0' },   // laranja
+  carro:   { fundo: '#e5f6ea', forte: '#15803d', linha: '#c3e8cf' },   // verde
+  manu:    { fundo: '#fceaf3', forte: '#be185d', linha: '#f4c9de' }    // rosa
+};
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
   ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
