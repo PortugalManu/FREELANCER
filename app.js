@@ -1,7 +1,7 @@
 /* Diárias — app do celular (PWA).
  * Só desenha as telas. Toda regra de negócio fica no Apps Script da planilha. */
 'use strict';
-const APP_VERSAO = 6;
+const APP_VERSAO = 7;
 
 /* ---------------- guardado no aparelho ---------------- */
 const K = { api: 'diarias.api', chave: 'diarias.chave', usuario: 'diarias.usuario', cfg: 'diarias.cfg', resumo: 'diarias.resumo' };
@@ -19,7 +19,7 @@ const st = {
   chave: guardado.ler(K.chave),
   usuario: guardado.ler(K.usuario),
   cfg: Object.assign({}, CFG_PADRAO, guardado.ler(K.cfg) || {}),
-  resumo: guardado.ler(K.resumo),
+  resumo: ordenarResumo(guardado.ler(K.resumo)),
   tela: 'resumo',
   offline: false,
   abertos: new Set(),
@@ -30,6 +30,17 @@ const st = {
 };
 
 /* ---------------- utilidades ---------------- */
+// Compras dos cartões em ordem de data (só na tela e na imagem; a aba continua na ordem de lançamento,
+// que é a ordem em que as fórmulas abatem os pagamentos). Mesmo dia: na ordem em que foram lançadas.
+function ordenarResumo(r) {
+  if (!r || !r.blocos) return r;
+  r.blocos.forEach(b => {
+    if (b.grupo !== 'cartoes' || !b.itens.every(it => it.compra)) return;
+    b.itens.sort((a, c) => a.compra.data.localeCompare(c.compra.data) || a.compra.linha - c.compra.linha);
+  });
+  return r;
+}
+
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtBRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -126,7 +137,7 @@ async function chamar(acao, dados = {}, tempo = 60000) {
     if (j.codigo === 'auth') { sair(j.erro); }
     throw new Error(j.erro || 'Algo deu errado.');
   }
-  if (j.resumo) { st.resumo = j.resumo; guardado.gravar(K.resumo, j.resumo); }
+  if (j.resumo) { st.resumo = ordenarResumo(j.resumo); guardado.gravar(K.resumo, st.resumo); }
   return j;
 }
 
