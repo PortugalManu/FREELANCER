@@ -1,7 +1,7 @@
 /* Diárias — app do celular (PWA).
  * Só desenha as telas. Toda regra de negócio fica no Apps Script da planilha. */
 'use strict';
-const APP_VERSAO = 5;
+const APP_VERSAO = 6;
 
 /* ---------------- guardado no aparelho ---------------- */
 const K = { api: 'diarias.api', chave: 'diarias.chave', usuario: 'diarias.usuario', cfg: 'diarias.cfg', resumo: 'diarias.resumo' };
@@ -208,6 +208,7 @@ $('#abas').addEventListener('click', e => {
 function irPara(tela) {
   if (st.tela === 'ajustes' && tela !== 'ajustes' && st.rascunhoCfg) { st.rascunhoCfg = null; aplicarTema(st.cfg); }
   if (st.tela === 'lancar' && tela !== 'lancar' && st.lancar && st.lancar.modo === 'editar') st.lancar = null;
+  if (st.tela === 'lancar' && tela !== 'lancar' && st.compra && st.compra.modo === 'editar') st.compra = null;
   st.tela = tela;
   document.querySelectorAll('#abas button').forEach(b => b.classList.toggle('ativa', b.dataset.tela === tela));
   render();
@@ -261,11 +262,13 @@ function blocoHTML(b) {
         ${emDia ? '' : ICO.chev}
       </button>
       ${aberto ? `<ul class="itens">${b.itens.map((it, i) => {
-        const mexe = it.diaria && podeMexer(b);
+        const alvo = it.diaria || it.compra;
+        const mexe = alvo && (it.diaria ? podeMexer(b) : ehAdmin());
         const corpo = `<span class="item-txt"><span class="item-titulo">${esc(it.titulo)}</span>${it.sub ? `<span class="item-sub">${esc(it.sub)}</span>` : ''}</span>
-          <span class="item-valor num">${brl(it.valor)}</span>${mexe ? (it.diaria.editavel ? ICO.lapis : ICO.cadeado) : ''}`;
+          <span class="item-valor num">${brl(it.valor)}</span>${mexe ? (alvo.editavel ? ICO.lapis : ICO.cadeado) : ''}`;
         return mexe ? `<li><button class="item item-btn" data-bloco="${esc(b.id)}" data-i="${i}">${corpo}</button></li>` : `<li class="item">${corpo}</li>`;
-      }).join('')}</ul>${b.itens.some(it => it.diaria) && podeMexer(b) ? '<p class="dica itens-dica">Toque numa diária para editar ou apagar.</p>' : ''}` : ''}
+      }).join('')}</ul>${b.itens.some(it => it.diaria) && podeMexer(b) ? '<p class="dica itens-dica">Toque numa diária para editar ou apagar.</p>'
+        : b.itens.some(it => it.compra) && ehAdmin() ? '<p class="dica itens-dica">Toque numa compra para editar ou apagar.</p>' : ''}` : ''}
     </div>`;
 }
 function ligarResumo(tela) {
@@ -276,7 +279,8 @@ function ligarResumo(tela) {
   }));
   tela.querySelectorAll('.item-btn').forEach(btn => btn.addEventListener('click', () => {
     const b = st.resumo.blocos.find(x => x.id === btn.dataset.bloco);
-    abrirDiaria(b, b.itens[Number(btn.dataset.i)]);
+    const it = b.itens[Number(btn.dataset.i)];
+    it.compra ? abrirCompra(it) : abrirDiaria(b, it);
   }));
   const env = $('#btnEnviarPai');
   if (env) env.addEventListener('click', enviarProPai);
@@ -325,11 +329,49 @@ async function abrirDiaria(b, it) {
 }
 function erroDeDiaria(e) {
   toast(e.message, true);
-  if (/mudou na planilha|já recebeu pagamento/.test(e.message)) { st.lancar = null; sincronizar(false); }
+  if (/mudou na planilha|já recebeu pagamento/.test(e.message)) { st.lancar = null; st.compra = null; sincronizar(false); }
+}
+
+const RE_PARCELA = /^(.*?)\s*(\d+)\s*\/\s*(\d+)\s*$/;
+async function abrirCompra(it) {
+  const c = it.compra;
+  const m = c.descricao.match(RE_PARCELA);
+  const parc = m && Number(m[3]) >= 2 ? { base: m[1].trim(), i: Number(m[2]), n: Number(m[3]) } : null;
+  if (!c.editavel) {
+    await dialogo(`<h2>${esc(c.descricao)}</h2><p>Essa compra já recebeu pagamento (total ou parcial), então fica travada no app para não bagunçar o que o pai já pagou.</p><p class="dica">Se precisar mesmo mudar, ajuste pela planilha.</p>`,
+      [{ texto: 'Entendi', classe: 'primario', valor: null }]);
+    return;
+  }
+  const quando = dataBonita(c.data);
+  const acao = await dialogo(`<h2>${esc(parc ? parc.base : c.descricao)}</h2>
+    <p>${esc(quando)} · cartão ${esc(c.cartao)} · <b class="num">${brl(c.valor)}</b>${parc ? ` <span class="dica">(parcela ${parc.i} de ${parc.n})</span>` : ''}${c.obs ? `<br><span class="dica">${esc(c.obs)}</span>` : ''}</p>`,
+    [{ texto: 'Apagar', classe: 'perigo', valor: 'apagar' }, { texto: 'Editar', classe: 'primario', valor: 'editar' }, { texto: 'Cancelar', classe: 'secundario so-texto', valor: null }]);
+  if (acao === 'editar') {
+    st.compra = {
+      modo: 'editar', linha: c.linha, original: c, titulo: `${parc ? parc.base : c.descricao} · ${quando}`,
+      cartao: c.cartao, data: c.data, descricao: parc ? parc.base : c.descricao.trim(),
+      valor: num2(c.valor), parcelas: parc ? parc.n : 1, parcelada: !!parc, obs: c.obs, enviando: false
+    };
+    st.lancarTipo = 'compra';
+    irPara('lancar');
+  } else if (acao === 'apagar') {
+    const ok = await dialogo(parc
+      ? `<h2>Apagar a compra inteira?</h2><p><b>${esc(parc.base)}</b> (${esc(quando)}, cartão ${esc(c.cartao)}): saem as <b>${parc.n} parcelas</b> da aba CARTÕES.</p>`
+      : `<h2>Apagar compra?</h2><p><b>${esc(c.descricao)}</b> (${esc(quando)}, cartão ${esc(c.cartao)}, <b class="num">${brl(c.valor)}</b>) sai da aba CARTÕES.</p>`,
+      [{ texto: 'Cancelar', valor: false }, { texto: 'Apagar', classe: 'perigo-cheio', valor: true }]);
+    if (!ok) return;
+    toast('Apagando…');
+    try {
+      const j = await chamar('apagarCompra', { linha: c.linha, original: c, idEnvio: novoId() });
+      vibrar(30); render();
+      toast(j.parcelas > 1 ? `${j.descricao}: ${j.parcelas} parcelas apagadas` : `${j.descricao} apagada`);
+    } catch (e) { erroDeDiaria(e); }
+  }
 }
 
 /* ===== Tela 2: Lançar (diária ou compra no cartão) ===== */
 function telaLancar() {
+  if (st.compra && st.compra.modo === 'editar') { st.lancarTipo = 'compra'; return telaCompra(); }
   const editando = st.lancar && st.lancar.modo === 'editar';
   if (!ehAdmin() || editando) { st.lancarTipo = 'diaria'; return telaDiaria(); }
   const tipo = st.lancarTipo || 'diaria';
@@ -367,7 +409,10 @@ function parcelasTexto(C) {
 function telaCompra() {
   if (!st.compra) st.compra = { cartao: guardado.ler('diarias.ultimoCartao') || 'Manu', data: hojeISO(), descricao: '', valor: '', parcelas: 1, obs: '', enviando: false };
   const C = st.compra;
+  const editando = C.modo === 'editar';
   return `
+    ${editando ? `<div class="editando"><span>Editando compra<br><span class="dica">${esc(C.titulo)}</span></span>
+      <button type="button" class="chip" id="btnCancelarEdicao">Cancelar</button></div>` : ''}
     <form id="formCompra" class="form" autocomplete="off">
       <div class="campo">Cartão
         <div class="segmento" id="segCartaoCompra">${['José', 'Manu'].map(c => `<button type="button" data-c="${c}" class="${C.cartao === c ? 'sel' : ''}">${c}</button>`).join('')}</div></div>
@@ -383,27 +428,28 @@ function telaCompra() {
         <input name="descricao" maxlength="80" value="${esc(C.descricao)}" placeholder="Ex.: Combustível" required>
         <div class="chips">${DESCRICOES.map(d => `<button type="button" class="chip ${C.descricao === d ? 'sel' : ''}" data-desc="${d}">${d}</button>`).join('')}</div>
       </label>
+      ${C.parcelada ? `<p class="dica resumo-lanc">Compra em ${C.parcelas} parcelas de ${brl(lerValor(C.valor))}. Para mudar o valor ou as parcelas, apague e lance de novo.</p>` : `
       <label>Valor ${C.parcelas > 1 ? 'total' : ''}
         <div class="input-moeda"><span>R$</span><input name="valor" inputmode="decimal" value="${esc(C.valor)}" placeholder="0,00" required></div>
-      </label>
-      <div class="campo">Parcelas
+      </label>`}
+      ${editando ? '' : `<div class="campo">Parcelas
         <div class="stepper">
           <button type="button" class="btn-icone" data-parc="-1" aria-label="Menos parcelas" ${C.parcelas <= 1 ? 'disabled' : ''}>−</button>
           <span class="num"><b>${C.parcelas}x</b>${C.parcelas === 1 ? ' (à vista)' : ''}</span>
           <button type="button" class="btn-icone" data-parc="1" aria-label="Mais parcelas" ${C.parcelas >= 24 ? 'disabled' : ''}>+</button>
         </div>
-      </div>
+      </div>`}
       <label>Observação <span class="dica" style="display:inline">(opcional)</span>
         <input name="obs" maxlength="200" value="${esc(C.obs)}" placeholder="Ex.: posto da BR-060">
       </label>
-      <div class="resumo-lanc"><span id="txtParcelas">${parcelasTexto(C)}</span><b class="num" id="txtTotalCompra">${brl(lerValor(C.valor) || 0)}</b></div>
-      <button class="btn primario" type="submit" ${C.enviando ? 'disabled' : ''}>${C.enviando ? '<span class="spin"></span> Gravando…' : 'Lançar compra'}</button>
+      ${editando ? '' : `<div class="resumo-lanc"><span id="txtParcelas">${parcelasTexto(C)}</span><b class="num" id="txtTotalCompra">${brl(lerValor(C.valor) || 0)}</b></div>`}
+      <button class="btn primario" type="submit" ${C.enviando ? 'disabled' : ''}>${C.enviando ? '<span class="spin"></span> Gravando…' : editando ? 'Salvar alterações' : 'Lançar compra'}</button>
     </form>`;
 }
 function ligarCompra(tela) {
   const C = st.compra;
   const f = $('#formCompra', tela);
-  const atualizar = () => { $('#txtParcelas', tela).textContent = parcelasTexto(C); $('#txtTotalCompra', tela).textContent = brl(lerValor(C.valor) || 0); };
+  const atualizar = () => { if (!$('#txtParcelas', tela)) return; $('#txtParcelas', tela).textContent = parcelasTexto(C); $('#txtTotalCompra', tela).textContent = brl(lerValor(C.valor) || 0); };
   f.addEventListener('input', e => {
     const n = e.target.name;
     if (n in C) C[n] = e.target.value;
@@ -415,8 +461,10 @@ function ligarCompra(tela) {
   f.querySelectorAll('[data-dia]').forEach(b => b.addEventListener('click', () => { C.data = hojeISO(Number(b.dataset.dia)); render(); }));
   f.querySelectorAll('[data-desc]').forEach(b => b.addEventListener('click', () => { C.descricao = b.dataset.desc; render(); $('input[name="valor"]').focus(); }));
   f.querySelectorAll('[data-parc]').forEach(b => b.addEventListener('click', () => { C.parcelas = Math.min(24, Math.max(1, C.parcelas + Number(b.dataset.parc))); render(); }));
+  const canc = $('#btnCancelarEdicao', tela);
+  if (canc) canc.addEventListener('click', () => { st.compra = null; irPara('resumo'); });
   const v = f.querySelector('input[name="valor"]');
-  v.addEventListener('blur', () => { const x = lerValor(v.value); if (x > 0) { v.value = num2(x); C.valor = v.value; } });
+  if (v) v.addEventListener('blur', () => { const x = lerValor(v.value); if (x > 0) { v.value = num2(x); C.valor = v.value; } });
   f.addEventListener('submit', e => { e.preventDefault(); enviarCompra(false); });
 }
 async function enviarCompra(confirmarDuplicado) {
@@ -427,6 +475,13 @@ async function enviarCompra(confirmarDuplicado) {
   if (!(valor > 0)) return toast('Informe o valor da compra.', true);
   C.enviando = true; render();
   try {
+    if (C.modo === 'editar') {
+      const j = await chamar('editarCompra', { linha: C.linha, original: C.original, novo: { data: C.data, descricao: C.descricao, cartao: C.cartao, valor, obs: C.obs }, idEnvio: novoId() });
+      vibrar(30); st.compra = null;
+      toast(j.parcelas > 1 ? `${j.descricao}: ${j.parcelas} parcelas atualizadas` : `${j.descricao} atualizada`);
+      irPara('resumo');
+      return;
+    }
     const j = await chamar('lancarCompra', { data: C.data, descricao: C.descricao, cartao: C.cartao, valor, parcelas: C.parcelas, obs: C.obs, confirmarDuplicado, idEnvio: novoId() });
     C.enviando = false;
     if (j.duplicado) {
@@ -444,7 +499,7 @@ async function enviarCompra(confirmarDuplicado) {
     toast(`${j.descricao} · ${brl(j.total)}${j.parcelas > 1 ? ` em ${j.parcelas}x` : ''} no cartão ${j.cartao}`);
   } catch (e) {
     C.enviando = false; render();
-    toast(e.message, true);
+    erroDeDiaria(e);
   }
 }
 

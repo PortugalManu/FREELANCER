@@ -82,7 +82,9 @@ Na aba **Lançar**, escolha **Compra no cartão** no topo e preencha cartão (Jo
 - A compra entra na aba **CARTÕES**, na primeira linha livre depois da última compra, igual a fazer na mão. Pago, Falta e Status continuam sendo as fórmulas da aba.
 - **Parcelado:** você digita o valor **total**. O app cria uma linha por parcela ("Pneu 1/3", "Pneu 2/3"…), e os centavos que sobram vão na 1ª. Antes de lançar, ele mostra em quais faturas as parcelas caem. No Resumo, cada parcela só aparece quando chega a fatura dela, igual ao RESUMO da planilha.
 - Se já existir uma compra igual (mesma data, cartão, descrição e valor), o app avisa antes.
-- Por enquanto, editar ou apagar compra continua sendo pela planilha.
+- **Editar ou apagar:** no Resumo, abra **Cartões** e toque na compra. Só dá para mexer em compra **Pendente** (sem nenhum pagamento abatido); as outras aparecem com 🔒.
+  - Apagar não apaga a linha (a tabela de pagamentos fica nas mesmas linhas): tira a compra e sobe as de baixo, mantendo a ordem. As fórmulas e os pagamentos não saem do lugar.
+  - Compra parcelada: apagar tira **todas as parcelas**. Editar muda descrição, data, cartão e observação de todas; para mudar o valor ou as parcelas, apague e lance de novo.
 
 ## Editar ou apagar uma diária
 

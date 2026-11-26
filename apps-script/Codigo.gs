@@ -61,6 +61,7 @@ const ABAS_EXTRAS = [
     colCartao: 3,     // C — cartão da compra
     colData: 1,       // A — data da compra
     colDescricao: 2,  // B — descrição (a parcela vem no fim: "Caminhao 2/4")
+    colObs: 8,        // H — observação da compra
     cabecalho: ['Data', 'Descrição', 'Falta pagar'],
     colMoedaResumo: 2, // posição (0-based) da coluna de valor no quadro do RESUMO
     montarLinha: (row, falta, tz) => [formatDataBR_(row[0], tz), row[1], falta]
@@ -791,9 +792,9 @@ function lerExtra_(cfg, tz, todas) {
 
   const proxVenc = proximoVencimentoCartao_(new Date());
 
-  const vals = sh.getRange(EXTRA_FIRST_ROW, 1, last - EXTRA_FIRST_ROW + 1, cfg.colStatus).getValues();
+  const vals = sh.getRange(EXTRA_FIRST_ROW, 1, last - EXTRA_FIRST_ROW + 1, Math.max(cfg.colStatus, cfg.colObs || 0)).getValues();
   const itens = [];
-  vals.forEach(row => {
+  vals.forEach((row, idx) => {
     const valor = sanitizeToNumber_(row[cfg.colValor - 1]);
     const falta = round2_(sanitizeToNumber_(row[cfg.colFalta - 1]));
     if (valor <= 0.004 || falta <= 0.004) return;
@@ -821,7 +822,23 @@ function lerExtra_(cfg, tz, todas) {
       sub = String(row[cfg.colStatus - 1] || '');
     }
 
-    itens.push({ falta, cartao, titulo, sub, linha: cfg.montarLinha(linhaOrigem, falta, tz) });
+    // compra (só CARTÕES): onde está e como estava, para o app editar/apagar (o script confere antes de mexer)
+    let compra = null;
+    if (cfg.colDescricao) {
+      const dCompra = parseDataBR_(row[cfg.colData - 1]);
+      const pago = round2_(sanitizeToNumber_(row[cfg.colValor]));   // coluna logo depois do Valor = Pago
+      compra = {
+        linha: EXTRA_FIRST_ROW + idx,
+        data: dCompra ? Utilities.formatDate(dCompra, tz, 'yyyy-MM-dd') : '',
+        descricao: String(row[cfg.colDescricao - 1] || ''),
+        cartao,
+        valor: round2_(valor),
+        obs: String(row[cfg.colObs - 1] || ''),
+        editavel: pago <= 0.004   // nenhum pagamento abatido
+      };
+    }
+
+    itens.push({ falta, cartao, titulo, sub, compra, linha: cfg.montarLinha(linhaOrigem, falta, tz) });
   });
   return itens;
 }

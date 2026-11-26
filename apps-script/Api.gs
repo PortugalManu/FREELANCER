@@ -3,7 +3,7 @@
  *
  * O app (PWA) conversa com este script por POST, em JSON:
  *   { token, acao, ...dados }
- * Ações: ping, resumo, abater, lancar, editar, apagar, lancarCompra, salvarConfig.
+ * Ações: ping, resumo, abater, lancar, editar, apagar, lancarCompra, editarCompra, apagarCompra, salvarConfig.
  *
  * As regras de negócio NÃO ficam aqui: o app chama as mesmas funções do menu
  * (abaterDiariasCore_, abaterExtraCore_, lerDias_, lerExtra_, gerarResumo_).
@@ -18,7 +18,7 @@ const APP_PROP_URL_PWA = 'APP_URL_PWA';      // endereço do app (GitHub Pages)
 const APP_PROP_URL_API = 'APP_URL_API';      // URL do App da Web (termina em /exec)
 const APP_PROP_CFG = 'APP_CFG_';             // + nome → preferências visuais da pessoa
 const APP_VALOR_DIARIA = 170;
-const VERSAO_SCRIPT = 4;   // aparece no app em "Do meu jeito" (para saber se a implantação nova pegou)
+const VERSAO_SCRIPT = 5;   // aparece no app em "Do meu jeito" (para saber se a implantação nova pegou)
 
 const ALVOS_ABATER = {
   jose:    { tipo: 'diarias', cfg: () => DIARIAS[0] },
@@ -95,6 +95,14 @@ function rotear_(u, req) {
     case 'lancarCompra':
       if (u.papel !== 'admin') throw new Error('Seu acesso não permite lançar compras nos cartões.');
       return comGravacao_(req.idEnvio, () => lancarCompraCore_(req, u.nome));
+
+    case 'editarCompra':
+      if (u.papel !== 'admin') throw new Error('Seu acesso não permite mexer nas compras dos cartões.');
+      return comGravacao_(req.idEnvio, () => editarCompraCore_(req, u.nome));
+
+    case 'apagarCompra':
+      if (u.papel !== 'admin') throw new Error('Seu acesso não permite mexer nas compras dos cartões.');
+      return comGravacao_(req.idEnvio, () => apagarCompraCore_(req, u.nome));
 
     case 'salvarConfig':
       return { config: salvarConfig_(u, req.config || {}) };
@@ -448,6 +456,145 @@ function lancarCompraCore_(req, autor) {
   };
 }
 
+
+/* ----- editar / apagar compra ----- */
+
+// Lê a parte das compras (A:H) da aba CARTÕES, com fórmulas (ex.: "=8,1+11,1" no Valor) preservadas
+function lerComprasBrutas_(sh) {
+  const nLinhas = Math.max(0, sh.getMaxRows() - EXTRA_FIRST_ROW + 1);
+  if (!nLinhas) return { valores: [], formulas: [], ultima: EXTRA_FIRST_ROW - 1 };
+  const rg = sh.getRange(EXTRA_FIRST_ROW, 1, nLinhas, COL_OBS_CARTAO);
+  const valores = rg.getValues(), formulas = rg.getFormulas();
+  let ultima = EXTRA_FIRST_ROW - 1;
+  valores.forEach((r, i) => { if (r.slice(0, 4).some(v => v !== '' && v !== null)) ultima = EXTRA_FIRST_ROW + i; });
+  return { valores, formulas, ultima };
+}
+
+/**
+ * Antes de editar/apagar: a linha ainda é a compra que o app mostrou? E ela está "Pendente"
+ * (nenhum pagamento abatido)? Se for parcela, devolve também as outras parcelas da mesma compra.
+ */
+function conferirCompra_(sh, cfg, linha, orig, tz) {
+  linha = Number(linha);
+  if (!orig || !(linha >= EXTRA_FIRST_ROW)) throw new Error('Compra inválida. Atualize o app.');
+  const b = lerComprasBrutas_(sh);
+  const row = b.valores[linha - EXTRA_FIRST_ROW];
+  const d = row && parseDataBR_(row[cfg.colData - 1]);
+  const igual = d
+    && Utilities.formatDate(d, tz, 'yyyy-MM-dd') === orig.data
+    && String(row[cfg.colDescricao - 1] || '') === String(orig.descricao || '')
+    && normalizarCartao_(row[cfg.colCartao - 1]) === normalizarCartao_(orig.cartao)
+    && Math.abs(round2_(sanitizeToNumber_(row[cfg.colValor - 1])) - round2_(Number(orig.valor))) < 0.005;
+  if (!igual) throw new Error('Essa compra mudou na planilha desde a última atualização. Atualize o app e tente de novo.');
+
+  const pendente = r => round2_(sanitizeToNumber_(b.valores[r - EXTRA_FIRST_ROW][cfg.colValor])) <= 0.004;  // Pago = 0
+  const desc = String(row[cfg.colDescricao - 1] || '');
+  const m = desc.match(/^(.*?)\s*(\d+)\s*\/\s*(\d+)\s*$/);
+  let linhas = [linha], parcelas = null;
+  if (m && Number(m[3]) >= 2) {
+    const chave = Utilities.formatDate(d, tz, 'yyyy-MM-dd'), cartao = normalizarCartao_(row[cfg.colCartao - 1]);
+    linhas = [];
+    b.valores.forEach((r, i) => {
+      const dd = parseDataBR_(r[cfg.colData - 1]);
+      const mm = String(r[cfg.colDescricao - 1] || '').match(/^(.*?)\s*(\d+)\s*\/\s*(\d+)\s*$/);
+      if (dd && mm && mm[3] === m[3] && descricaoBase_(mm[1]) === descricaoBase_(m[1])
+        && Utilities.formatDate(dd, tz, 'yyyy-MM-dd') === chave && normalizarCartao_(r[cfg.colCartao - 1]) === cartao) {
+        linhas.push(EXTRA_FIRST_ROW + i);
+      }
+    });
+    parcelas = { base: m[1].trim(), n: Number(m[3]) };
+  }
+  if (linhas.some(r => !pendente(r))) {
+    throw new Error(parcelas
+      ? 'Alguma parcela dessa compra já recebeu pagamento. Para mexer nela, ajuste pela planilha.'
+      : 'Essa compra já recebeu pagamento (total ou parcial). Para mexer nela, ajuste pela planilha.');
+  }
+  return {
+    linha, linhas, parcelas, bruto: b,
+    dataTxt: formatDataBR_(d, tz), descricao: desc, cartao: normalizarCartao_(row[cfg.colCartao - 1]),
+    valor: round2_(sanitizeToNumber_(row[cfg.colValor - 1]))
+  };
+}
+
+// Edita uma compra pendente. Parcelada: muda data, descrição, cartão e obs de TODAS as parcelas (o valor não).
+function editarCompraCore_(req, autor) {
+  const cfg = ABAS_EXTRAS[0];
+  const tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+  const sh = SpreadsheetApp.getActive().getSheetByName(cfg.aba);
+  if (!sh) throw new Error(`Não encontrei a aba "${cfg.aba}".`);
+  const orig = conferirCompra_(sh, cfg, req.linha, req.original, tz);
+
+  const nv = req.novo || {};
+  const m = String(nv.data || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) throw new Error('Data inválida.');
+  const data = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const descricao = String(nv.descricao || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  if (!descricao) throw new Error('Informe a descrição da compra.');
+  if (/\d+\s*\/\s*\d+\s*$/.test(descricao)) throw new Error('Não coloque "1/4" na descrição: as parcelas são numeradas sozinhas.');
+  const cartao = normalizarCartao_(nv.cartao);
+  if (!cartao) throw new Error('Escolha o cartão (José ou Manu).');
+  const obs = String(nv.obs || '').trim().slice(0, 200);
+
+  if (orig.parcelas) {
+    orig.linhas.forEach(r => {
+      const i = String(orig.bruto.valores[r - EXTRA_FIRST_ROW][cfg.colDescricao - 1]).match(/(\d+)\s*\/\s*\d+\s*$/)[1];
+      sh.getRange(r, 1, 1, 3).setValues([[data, `${descricao} ${i}/${orig.parcelas.n}`, cartao]]);
+      sh.getRange(r, COL_OBS_CARTAO).setValue(obs);
+    });
+  } else {
+    const valor = round2_(sanitizeToNumber_(nv.valor));
+    if (!(valor > 0)) throw new Error('Informe o valor da compra.');
+    sh.getRange(orig.linha, 1, 1, 4).setValues([[data, descricao, cartao, valor]]);
+    sh.getRange(orig.linha, COL_OBS_CARTAO).setValue(obs);
+  }
+  SpreadsheetApp.flush();
+  registrarLogApp_(autor, 'Editou compra',
+    `${orig.descricao} (${orig.dataTxt}, cartão ${orig.cartao}, R$ ${formatMoneyBR_(orig.valor)}${orig.parcelas ? `, ${orig.linhas.length} parcelas` : ''}) → ${descricao} · ${formatDataBR_(data, tz)} · cartão ${cartao}${orig.parcelas ? '' : ' · R$ ' + formatMoneyBR_(sanitizeToNumber_(nv.valor))}${obs ? ' · ' + obs : ''}`);
+  gerarResumo_();
+  return { gravado: true, descricao, cartao, parcelas: orig.parcelas ? orig.linhas.length : 1 };
+}
+
+/**
+ * Apaga uma compra pendente (parcelada: todas as parcelas).
+ * NÃO apaga a linha (a tabela de pagamentos fica nas mesmas linhas): tira só A:D e H
+ * e sobe as compras de baixo, mantendo a ordem. As fórmulas Pago/Falta/Status ficam onde estão.
+ */
+function apagarCompraCore_(req, autor) {
+  const cfg = ABAS_EXTRAS[0];
+  const tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+  const sh = SpreadsheetApp.getActive().getSheetByName(cfg.aba);
+  if (!sh) throw new Error(`Não encontrei a aba "${cfg.aba}".`);
+  const orig = conferirCompra_(sh, cfg, req.linha, req.original, tz);
+
+  const b = orig.bruto;
+  const apagar = new Set(orig.linhas);
+  // célula com fórmula volta como fórmula (ex.: "=8,1+11,1")
+  const bruta = (i, c) => b.formulas[i][c] || b.valores[i][c];
+  const ficam = [];
+  for (let r = EXTRA_FIRST_ROW; r <= b.ultima; r++) {
+    if (apagar.has(r)) continue;
+    const i = r - EXTRA_FIRST_ROW;
+    ficam.push({ ad: [0, 1, 2, 3].map(c => bruta(i, c)), h: bruta(i, COL_OBS_CARTAO - 1) });
+  }
+  const primeira = Math.min.apply(null, orig.linhas);
+  const daqui = ficam.slice(primeira - EXTRA_FIRST_ROW);   // só reescreve do ponto apagado para baixo
+  const n = b.ultima - primeira + 1;
+  if (n > 0) {
+    sh.getRange(primeira, 1, n, 4).clearContent();
+    sh.getRange(primeira, COL_OBS_CARTAO, n, 1).clearContent();
+    if (daqui.length) {
+      sh.getRange(primeira, 1, daqui.length, 4).setValues(daqui.map(x => x.ad));
+      sh.getRange(primeira, COL_OBS_CARTAO, daqui.length, 1).setValues(daqui.map(x => [x.h]));
+    }
+  }
+  SpreadsheetApp.flush();
+  const total = round2_(orig.linhas.reduce((s, r) => s + sanitizeToNumber_(b.valores[r - EXTRA_FIRST_ROW][cfg.colValor - 1]), 0));
+  registrarLogApp_(autor, 'Apagou compra',
+    `${orig.parcelas ? orig.parcelas.base + ` (${orig.linhas.length} parcelas)` : orig.descricao} · ${orig.dataTxt} · cartão ${orig.cartao} · R$ ${formatMoneyBR_(total)}`);
+  gerarResumo_();
+  return { gravado: true, descricao: orig.parcelas ? orig.parcelas.base : orig.descricao, parcelas: orig.linhas.length, total };
+}
+
 // Aba "LOG DO APP": quem lançou, editou ou apagou o quê, e quando. Nunca atrapalha a gravação.
 const ABA_LOG_APP = 'LOG DO APP';
 function registrarLogApp_(quem, acao, detalhe) {
@@ -496,7 +643,9 @@ function dadosResumo_() {
       qtd: itens.length,
       unidade: cfg.unidade.replace('(s)', itens.length === 1 ? '' : 's'),
       falta: round2_(itens.reduce((s, it) => s + it.falta, 0)),
-      itens: itens.map(it => ({ titulo: it.titulo, sub: it.sub, valor: it.falta }))
+      itens: itens.map(it => it.compra
+        ? { titulo: it.titulo, sub: it.sub, valor: it.falta, compra: it.compra }
+        : { titulo: it.titulo, sub: it.sub, valor: it.falta })
     });
   });
 
